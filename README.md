@@ -78,24 +78,20 @@ disable the Cloudflare wake-up/deployment to avoid duplicate Gateway sessions.
 
 ### Oracle Cloud: GitHub Actions deployment
 
-OCI Vault is optional. For a zero-cost setup, the Discord token can be stored
-as a GitHub Actions Secret and delivered over SSH only when a manual deployment
-is run. It is not committed, placed in a command line, or printed by the
-workflow.
+For a VM without a public IP, use a self-hosted GitHub Actions Runner. The
+Runner makes an outbound connection to GitHub, so no inbound SSH or public IP
+is required. OCI Vault is not required.
 
-First run [`oracle/bootstrap.sh`](./oracle/bootstrap.sh) as root on the VM. It
-only installs Docker and adds the standard `ubuntu`/`opc` user to the Docker
-group. Then add these values in GitHub Settings → Secrets and variables →
-Actions:
+Create a short-lived runner registration token in GitHub: repository Settings →
+Actions → Runners → New self-hosted runner → Linux x64. Run
+[`oracle/bootstrap.sh`](./oracle/bootstrap.sh) as root on the VM with that
+registration token. The token is only for registering the Runner and is not the
+Discord token.
 
-- Secret `DISCORD_TOKEN`: the Discord bot token
-- Secret `OCI_SSH_PRIVATE_KEY`: the private SSH key for the VM
-- Secret `OCI_SSH_HOST_KEY`: the VM's pinned SSH host-key line
-- Variable `OCI_HOST`: the VM public IP or hostname
-- Variable `OCI_USER`: `ubuntu` or `opc`
-
-Run `Deploy to Oracle VM` from the Actions tab. The workflow uploads the
-checked-out source, writes `.env` with mode `600`, and runs Docker Compose.
+Store only `DISCORD_TOKEN` as a GitHub Actions Secret. Run `Deploy to Oracle VM`
+from the Actions tab. The workflow executes on the OCI VM, writes `.env` with
+mode `600`, and runs Docker Compose locally. The Discord token never enters Git
+or an SSH command.
 
 ## Deploy
 
