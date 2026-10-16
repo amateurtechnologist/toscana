@@ -21,8 +21,8 @@ Discord Gateway → MESSAGE_CREATE → category route → Expand-shaped message
 ```
 
 `GatewayMiddleware` deliberately does not call `next()`. Gateway's
-continuation preserves the original upstream destination, so this Worker routes
-the request directly to the Container Durable Object instead.
+continuation preserves the original upstream destination, so this Worker
+routes the request directly to the Container Durable Object instead.
 
 The Container keeps one Discord Gateway session open. For each guild message it
 resolves the source channel's category through the Discord API and routes
@@ -76,30 +76,25 @@ process or VM restarts. Do not run this instance and the Cloudflare Container
 with the same bot token at the same time; wait for `gateway_ready` here, then
 disable the Cloudflare wake-up/deployment to avoid duplicate Gateway sessions.
 
-### Oracle Cloud: OCI Vault
+### Oracle Cloud: GitHub Actions deployment
 
-For an Oracle VM, keep the Discord token in OCI Vault instead of putting it in
-User Data, Git, or a command line. The repository contains a Vault-aware
-bootstrap at [`oracle/bootstrap.sh`](./oracle/bootstrap.sh).
+OCI Vault is optional. For a zero-cost setup, the Discord token can be stored
+as a GitHub Actions Secret and delivered over SSH only when a manual deployment
+is run. It is not committed, placed in a command line, or printed by the
+workflow.
 
-In the OCI Console:
+First run [`oracle/bootstrap.sh`](./oracle/bootstrap.sh) as root on the VM. It
+only installs Docker and adds the standard `ubuntu`/`opc` user to the Docker
+group. Then add these values in GitHub Settings → Secrets and variables →
+Actions:
 
-1. Create a default (software-protected) Vault and a Secret containing the bot
-   token. Copy the Secret OCID.
-2. Create a Dynamic Group matching only the target VM:
-   `ALL {instance.id = '<VM_OCID>'}`.
-3. Create this policy in the tenancy root, replacing the names and OCID:
+- Secret `DISCORD_TOKEN`: the Discord bot token
+- Secret `OCI_SSH_PRIVATE_KEY`: the private SSH key for the VM
+- Variable `OCI_HOST`: the VM public IP or hostname
+- Variable `OCI_USER`: `ubuntu` or `opc`
 
-   `Allow dynamic-group ToscanaGatewayInstances to read secret-bundles in tenancy where target.secret.id = '<SECRET_OCID>'`
-
-4. On first VM setup, provide only the Secret OCID to the bootstrap. The VM
-   uses its Instance Principal to read the Secret and creates `/opt/toscana/.env`
-   with mode `600` before starting Docker. The token is never printed.
-
-The bootstrap needs the repository to be public only while it is initially
-downloaded. After the VM has cloned the repository and started the container,
-making the repository private does not stop the running container or its
-restart policy.
+Run `Deploy to Oracle VM` from the Actions tab. The workflow uploads the
+checked-out source, writes `.env` with mode `600`, and runs Docker Compose.
 
 ## Deploy
 
@@ -166,8 +161,8 @@ The API payload shape is in [`gateway-policy.example.json`](./gateway-policy.exa
 Replace the worker ID with the deployed Worker's 32-character ID; do not put
 an API token in this repository.
 
-Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT tunnels,
-and traffic excluded from inspection bypass the Gateway Worker.
+Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT
+tunnels, and traffic excluded from inspection bypass the Gateway Worker.
 
 ## Container persistence
 
