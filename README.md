@@ -76,6 +76,31 @@ process or VM restarts. Do not run this instance and the Cloudflare Container
 with the same bot token at the same time; wait for `gateway_ready` here, then
 disable the Cloudflare wake-up/deployment to avoid duplicate Gateway sessions.
 
+### Oracle Cloud: OCI Vault
+
+For an Oracle VM, keep the Discord token in OCI Vault instead of putting it in
+User Data, Git, or a command line. The repository contains a Vault-aware
+bootstrap at [`oracle/bootstrap.sh`](./oracle/bootstrap.sh).
+
+In the OCI Console:
+
+1. Create a default (software-protected) Vault and a Secret containing the bot
+   token. Copy the Secret OCID.
+2. Create a Dynamic Group matching only the target VM:
+   `ALL {instance.id = '<VM_OCID>'}`.
+3. Create this policy in the tenancy root, replacing the names and OCID:
+
+   `Allow dynamic-group ToscanaGatewayInstances to read secret-bundles in tenancy where target.secret.id = '<SECRET_OCID>'`
+
+4. On first VM setup, provide only the Secret OCID to the bootstrap. The VM
+   uses its Instance Principal to read the Secret and creates `/opt/toscana/.env`
+   with mode `600` before starting Docker. The token is never printed.
+
+The bootstrap needs the repository to be public only while it is initially
+downloaded. After the VM has cloned the repository and started the container,
+making the repository private does not stop the running container or its
+restart policy.
+
 ## Deploy
 
 Enable the Message Content privileged intent in the Discord Developer Portal.
