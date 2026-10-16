@@ -21,8 +21,8 @@ Discord Gateway → MESSAGE_CREATE → category route → Expand-shaped message
 ```
 
 `GatewayMiddleware` deliberately does not call `next()`. Gateway's
-continuation preserves the original upstream destination, so this Worker
-routes the request directly to the Container Durable Object instead.
+continuation preserves the original upstream destination, so this Worker routes
+the request directly to the Container Durable Object instead.
 
 The Container keeps one Discord Gateway session open. For each guild message it
 resolves the source channel's category through the Discord API and routes
@@ -54,6 +54,27 @@ npm run dev
 
 The local Worker is normally available at `http://localhost:8787`. Request
 `/healthz` to check the Worker and Container path.
+
+## Standalone deployment
+
+The Gateway process does not require Cloudflare at runtime. It can run as a
+long-lived Node.js container on an always-on PC, NAS, Raspberry Pi, or Oracle
+Cloud Always Free VM. The host only needs outbound HTTPS/WebSocket access; no
+public inbound port is required.
+
+Create `.env` from `.env.example`, set the real bot token and the category
+values, then run:
+
+```sh
+docker compose up -d --build
+docker compose logs -f toscana
+curl http://127.0.0.1:8080/healthz
+```
+
+The container uses `restart: unless-stopped`, so the Gateway reconnects after
+process or VM restarts. Do not run this instance and the Cloudflare Container
+with the same bot token at the same time; wait for `gateway_ready` here, then
+disable the Cloudflare wake-up/deployment to avoid duplicate Gateway sessions.
 
 ## Deploy
 
@@ -120,8 +141,8 @@ The API payload shape is in [`gateway-policy.example.json`](./gateway-policy.exa
 Replace the worker ID with the deployed Worker's 32-character ID; do not put
 an API token in this repository.
 
-Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT
-tunnels, and traffic excluded from inspection bypass the Gateway Worker.
+Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT tunnels,
+and traffic excluded from inspection bypass the Gateway Worker.
 
 ## Container persistence
 
