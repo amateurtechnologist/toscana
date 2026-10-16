@@ -1,0 +1,68 @@
+name: Deploy to Oracle VM
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      OCI_HOST: ${{ vars.OCI_HOST }}
+      OCI_USER: ${{ vars.OCI_USER }}
+      APP_DIR: /home/${{ vars.OCI_USER }}/toscana
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate deployment settings
+        run: |
+          test -n "$OCI_HOST"
+          test -n "$OCI_USER"
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.OCI_SSH_PRIVATE_KEY }}
+          SSH_HOST_KEY: ${{ secrets.OCI_SSH_HOST_KEY }}
+        run: |
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_HOST_KEY"
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/toscana_oci"
+          chmod 600 "$HOME/.ssh/toscana_oci"
+          printf '%s\n' "$SSH_HOST_KEY" > "$HOME/.ssh/known_hosts"
+
+      - name: Upload and start
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+        run: |
+          test -n "$DISCORD_TOKEN"
+          SSH=(ssh -i "$HOME/.ssh/toscana_oci" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts")
+
+          "${SSH[@]}" "$OCI_USER@$OCI_HOST" "mkdir -p '$APP_DIR'"
+
+          tar --exclude=.git \
+            --exclude=node_modules \
+            --exclude=.wrangler \
+            --exclude=.cloudflare \
+            -czf - . \
+            | "${SSH[@]}" "$OCI_USER@$OCI_HOST" "tar -xzf - -C '$APP_DIR'"
+
+          printf '%s\n' \
+            "DISCORD_TOKEN=$DISCORD_TOKEN" \
+            'CATEGORY_A_ID=1554077666573950986' \
+            'CATEGORY_A_FORWARD_CHANNEL_ID=1560615321910386758' \
+            'CATEGORY_B_ID=1554078902496792607' \
+            'CATEGORY_B_FORWARD_CHANNEL_ID=1560615399547216042' \
+            'TOSCANA_BLACKLIST_CHANNEL_IDS=' \
+            'TOSCANA_BLACKLIST_GUILD_IDS=' \
+            | "${SSH[@]}" "$OCI_USER@$OCI_HOST" \
+              "umask 077; cat > '$APP_DIR/.env'; chmod 600 '$APP_DIR/.env'"
+
+          "${SSH[@]}" "$OCI_USER@$OCI_HOST" \
+            "cd '$APP_DIR' && docker compose up -d --build"
