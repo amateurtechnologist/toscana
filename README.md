@@ -103,8 +103,8 @@ The Worker has a five-minute Cron trigger that requests the Container health
 endpoint. This is intentional: a Durable Object binding does not start its
 Container until the object receives a request. The scheduled wake-up starts
 the Gateway after deployment and reactivates it before the one-hour idle
-timeout. `container_wakeup`, `container_started`,
-`gateway_socket_open`, and `gateway_ready` are the relevant log events.
+timeout. `container_wakeup`, `container_started`, `gateway_socket_open`, and
+`gateway_ready` are the relevant log events.
 
 ## Configure Gateway Forward
 
@@ -116,13 +116,12 @@ In the same Cloudflare account:
 3. Select the deployed `toscana` Worker as the Forward target.
 4. Verify the response contains `x-toscana-gateway: container`.
 
-The API payload shape is in
-[`gateway-policy.example.json`](./gateway-policy.example.json).
+The API payload shape is in [`gateway-policy.example.json`](./gateway-policy.example.json).
 Replace the worker ID with the deployed Worker's 32-character ID; do not put
 an API token in this repository.
 
-Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT tunnels,
-and traffic excluded from inspection bypass the Gateway Worker.
+Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT
+tunnels, and traffic excluded from inspection bypass the Gateway Worker.
 
 ## Container persistence
 
