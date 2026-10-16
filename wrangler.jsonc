@@ -6,6 +6,9 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "vars": {
     "CATEGORY_A_ID": "",
     "CATEGORY_A_FORWARD_CHANNEL_ID": "",

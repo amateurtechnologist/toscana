@@ -725,13 +725,19 @@ export class DiscordGatewayClient {
     this.send({
       op: 2,
       d: {
-          token: this.config.token,
-          intents: this.config.intents,
-          properties: {
-            os: "linux",
-            browser: "toscana",
-            device: "toscana",
-          },
+        token: this.config.token,
+        intents: this.config.intents,
+        properties: {
+          os: "linux",
+          browser: "toscana",
+          device: "toscana",
+        },
+        presence: {
+          since: null,
+          activities: [],
+          status: "online",
+          afk: false,
+        },
       },
     });
   }

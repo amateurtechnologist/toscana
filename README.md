@@ -36,8 +36,9 @@ uploaded when possible, and every copy has a `元のメッセージを開く` bu
 The button points to the original message so `/expand` can resolve the source.
 
 The default `fetch` handler is available for local development and health
-checks. Production access is expected to come through a Cloudflare One
-Forward policy; `workersDev` and preview URLs are disabled.
+checks. `/healthz` wakes the Container and returns its actual Gateway state.
+Production access is expected to come through a Cloudflare One Forward policy;
+`workersDev` and preview URLs are disabled.
 
 ## Local development
 
@@ -97,6 +98,13 @@ npm run deploy
 The first deployment builds the Docker image and provisions the Container
 Durable Object. Container startup can take several minutes after the first
 deployment.
+
+The Worker has a five-minute Cron trigger that requests the Container health
+endpoint. This is intentional: a Durable Object binding does not start its
+Container until the object receives a request. The scheduled wake-up starts
+the Gateway after deployment and reactivates it before the one-hour idle
+timeout. `container_wakeup`, `container_started`, `gateway_socket_open`, and
+`gateway_ready` are the relevant log events.
 
 ## Configure Gateway Forward
 

@@ -6,6 +6,7 @@ import type {
 } from "@cloudflare/zt-types";
 
 const CONTAINER_INSTANCE = "gateway";
+const CONTAINER_HEALTH_PATH = "/healthz";
 const NO_BODY_STATUSES = new Set([204, 205, 304]);
 
 export class ToscanaContainer extends Container<Cloudflare.Env> {
@@ -103,6 +104,31 @@ async function forwardToContainer(
   return container.fetch(markGatewayRequest(request));
 }
 
+async function wakeContainer(env: Cloudflare.Env): Promise<void> {
+  const request = new Request(`https://toscana.internal${CONTAINER_HEALTH_PATH}`);
+  const response = await forwardToContainer(request, env);
+  const body = await response.text();
+  let health: { gateway?: { state?: string } } = {};
+
+  try {
+    health = JSON.parse(body) as { gateway?: { state?: string } };
+  } catch {
+    // Preserve the status in the log even if the container returned a non-JSON body.
+  }
+
+  const event = {
+    event: "container_wakeup",
+    status: response.status,
+    gateway_state: health.gateway?.state ?? "unknown",
+  };
+
+  if (response.ok) {
+    console.log(JSON.stringify(event));
+  } else {
+    console.error(JSON.stringify(event));
+  }
+}
+
 /**
  * Entry point selected by a Cloudflare One Gateway Forward policy.
  *
@@ -127,14 +153,28 @@ export class GatewayMiddleware extends WorkerEntrypoint<Cloudflare.Env> {
 
 export default {
   async fetch(request: Request, env: Cloudflare.Env): Promise<Response> {
-    if (new URL(request.url).pathname === "/healthz") {
-      return Response.json({ ok: true, service: "toscana-gateway" });
-    }
-
     try {
-      return await forwardToContainer(request, env);
+      const response = await forwardToContainer(request, env);
+      return markGatewayResponse(request, response);
     } catch (error) {
       return containerUnavailable(request, error);
     }
+  },
+
+  async scheduled(
+    _controller: ScheduledController,
+    env: Cloudflare.Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    ctx.waitUntil(
+      wakeContainer(env).catch((error) => {
+        console.error(
+          JSON.stringify({
+            event: "container_wakeup_failed",
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }),
+    );
   },
 } satisfies ExportedHandler<Cloudflare.Env>;
