@@ -7,11 +7,15 @@
   "workers_dev": false,
   "preview_urls": false,
   "vars": {
+    "CATEGORY_A_ID": "",
+    "CATEGORY_A_FORWARD_CHANNEL_ID": "",
+    "CATEGORY_B_ID": "",
+    "CATEGORY_B_FORWARD_CHANNEL_ID": "",
     "TOSCANA_BLACKLIST_CHANNEL_IDS": "",
     "TOSCANA_BLACKLIST_GUILD_IDS": ""
   },
   "secrets": {
-    "required": ["DISCORD_TOKEN", "TOSCANA_FORWARD_CHANNEL_ID"]
+    "required": ["DISCORD_TOKEN"]
   },
   "observability": {
     "enabled": true,

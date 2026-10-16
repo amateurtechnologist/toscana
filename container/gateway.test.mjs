@@ -3,16 +3,26 @@ import test from "node:test";
 
 import {
   createForwardPayload,
+  createExpandedPayload,
   createGatewayConfig,
   evaluateMessage,
   ForwardQueue,
   forwardMessage,
   parseSnowflakeList,
+  resolveMessageRoute,
 } from "./gateway.mjs";
 
 const config = {
   token: "test-token",
-  targetChannelId: "999",
+  routes: [
+    { name: "A", categoryId: "111", targetChannelId: "999" },
+    { name: "B", categoryId: "222", targetChannelId: "998" },
+  ],
+  routesByCategory: new Map([
+    ["111", { name: "A", categoryId: "111", targetChannelId: "999" }],
+    ["222", { name: "B", categoryId: "222", targetChannelId: "998" }],
+  ]),
+  targetChannelIds: new Set(["999", "998"]),
   blacklistedChannelIds: new Set(["888"]),
   blacklistedGuildIds: new Set(["777"]),
   intents: 33281,
@@ -40,23 +50,29 @@ test("parseSnowflakeList keeps only numeric IDs", () => {
 test("createGatewayConfig requires the token and target channel", () => {
   assert.throws(
     () => createGatewayConfig({ DISCORD_TOKEN: "token" }),
-    /TOSCANA_FORWARD_CHANNEL_ID/,
+    /CATEGORY_A_ID/,
   );
   const result = createGatewayConfig({
     DISCORD_TOKEN: "token",
-    TOSCANA_FORWARD_CHANNEL_ID: "123",
+    CATEGORY_A_ID: "100",
+    CATEGORY_A_FORWARD_CHANNEL_ID: "123",
+    CATEGORY_B_ID: "200",
+    CATEGORY_B_FORWARD_CHANNEL_ID: "456",
     TOSCANA_BLACKLIST_CHANNEL_IDS: "456,789",
   });
-  assert.equal(result.targetChannelId, "123");
+  assert.deepEqual(result.routes, [
+    { name: "A", categoryId: "100", targetChannelId: "123" },
+    { name: "B", categoryId: "200", targetChannelId: "456" },
+  ]);
   assert.deepEqual([...result.blacklistedChannelIds], ["456", "789"]);
 });
 
-test("only non-blacklisted thread messages are candidates", () => {
+test("non-blacklisted guild messages are candidates", () => {
   assert.deepEqual(evaluateMessage(message(), config), {
     forward: true,
-    reason: "thread_message",
+    reason: "message_candidate",
   });
-  assert.equal(evaluateMessage(message({ channel_type: 0 }), config).forward, false);
+  assert.equal(evaluateMessage(message({ channel_type: 0 }), config).forward, true);
   assert.equal(evaluateMessage(message({ channel_id: "888" }), config).reason, "blacklisted_channel");
   assert.equal(evaluateMessage(message({ guild_id: "777" }), config).reason, "blacklisted_guild");
   assert.equal(evaluateMessage(message({ author: { id: "321", bot: true } }), config).reason, "bot_message");
@@ -64,21 +80,65 @@ test("only non-blacklisted thread messages are candidates", () => {
   assert.equal(evaluateMessage(message({ type: 21 }), config).reason, "unsupported_message_type");
 });
 
-test("native Discord forward payload references the source message", () => {
-  assert.deepEqual(createForwardPayload(message()), {
-    allowed_mentions: { parse: [] },
-    message_reference: {
-      type: 1,
-      channel_id: "456",
-      message_id: "123",
-      fail_if_not_exists: true,
+test("route resolution maps thread messages to their category target", async () => {
+  const reads = [];
+  const route = await resolveMessageRoute(message(), config, {
+    fetchImpl: async (url) => {
+      const path = new URL(url).pathname;
+      reads.push(path);
+      if (path === "/api/v10/channels/456") {
+        return Response.json({
+          id: "456", guild_id: "789", type: 11, parent_id: "555", name: "thread",
+        });
+      }
+      if (path === "/api/v10/channels/555") {
+        return Response.json({
+          id: "555", guild_id: "789", type: 0, parent_id: "111", name: "source",
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
     },
   });
+  assert.deepEqual(route, {
+    forward: true,
+    reason: "category_message",
+    categoryId: "111",
+    targetChannelId: "999",
+    sourceName: "#source> 🧵thread",
+  });
+  assert.deepEqual(reads, [
+    "/api/v10/channels/456",
+    "/api/v10/channels/555",
+  ]);
+});
+
+test("forward payload matches the Expand rendering and links the source", () => {
+  const payload = createExpandedPayload(message(), {
+    targetChannelId: "999",
+    sourceName: "#source> 🧵thread",
+  });
+  assert.equal(payload.embeds[0].description, undefined);
+  assert.equal(payload.embeds[0].footer.text, "#source> 🧵thread");
+  assert.equal(payload.embeds[0].url, "https://discord.com/channels/789/456/123");
+  assert.equal(payload.components[0].components[0].label, "元のメッセージを開く");
+  assert.equal(payload.components[0].components[0].url, "https://discord.com/channels/789/456/123");
+  assert.deepEqual(payload.allowed_mentions, { parse: [] });
+});
+
+test("createForwardPayload is the Expand-shaped payload", () => {
+  assert.deepEqual(createForwardPayload(message(), {
+    targetChannelId: "999",
+    sourceName: "#source",
+  }), createExpandedPayload(message(), {
+    targetChannelId: "999",
+    sourceName: "#source",
+  }));
 });
 
 test("forwardMessage sends a single native forward request", async () => {
   const requests = [];
   const result = await forwardMessage(message(), config, {
+    route: { targetChannelId: "999", sourceName: "#source" },
     fetchImpl: async (url, init) => {
       requests.push({ url, init });
       return Response.json({ id: "forwarded" });
@@ -89,13 +149,16 @@ test("forwardMessage sends a single native forward request", async () => {
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, "https://discord.com/api/v10/channels/999/messages");
   assert.equal(requests[0].init.headers.authorization, "Bot test-token");
-  assert.deepEqual(JSON.parse(requests[0].init.body), createForwardPayload(message()));
+  assert.deepEqual(JSON.parse(requests[0].init.body), createForwardPayload(message(), {
+    targetChannelId: "999", sourceName: "#source",
+  }));
 });
 
 test("forwardMessage retries Discord rate limits", async () => {
   let attempts = 0;
   const delays = [];
   const result = await forwardMessage(message(), config, {
+    route: { targetChannelId: "999", sourceName: "#source" },
     sleep: async (delay) => delays.push(delay),
     fetchImpl: async () => {
       attempts += 1;

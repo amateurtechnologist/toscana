@@ -5,6 +5,7 @@ import {
   evaluateMessage,
   ForwardQueue,
   forwardMessage,
+  resolveMessageRoute,
 } from "./gateway.mjs";
 
 const port = Number(process.env.PORT ?? 8080);
@@ -13,22 +14,27 @@ let startupError;
 
 try {
   const config = createGatewayConfig();
-  const queue = new ForwardQueue((message) => forwardMessage(message, config));
+  const queue = new ForwardQueue(({ message, route }) =>
+    forwardMessage(message, config, { route }),
+  );
   gateway = new DiscordGatewayClient({
     config,
-    onMessage(message) {
+    async onMessage(message) {
       const decision = evaluateMessage(message, config);
       if (!decision.forward) return;
+      const route = await resolveMessageRoute(message, config);
+      if (!route.forward) return;
 
       return queue
-        .enqueue(message)
+        .enqueue({ message, route })
         .then(() => {
           console.log(
             JSON.stringify({
               event: "message_forwarded",
               message_id: message.id,
               source_channel_id: message.channel_id,
-              target_channel_id: config.targetChannelId,
+              target_channel_id: route.targetChannelId,
+              category_id: route.categoryId,
             }),
           );
         })
