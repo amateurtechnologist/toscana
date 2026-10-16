@@ -10,9 +10,9 @@ export DEBIAN_FRONTEND=noninteractive
 
 if command -v apt-get >/dev/null 2>&1; then
   apt-get update -qq
-  apt-get install -y -qq ca-certificates curl
+  apt-get install -y -qq ca-certificates curl git jq
 elif command -v dnf >/dev/null 2>&1; then
-  dnf install -y ca-certificates curl
+  dnf install -y ca-certificates curl git jq
 else
   echo 'Unsupported OCI image: apt-get or dnf is required.' >&2
   exit 1
@@ -32,4 +32,4 @@ for deploy_user in ubuntu opc; do
   fi
 done
 
-echo 'Docker bootstrap complete. Run the Deploy to Oracle VM workflow next.'
+echo 'Docker bootstrap complete.'
