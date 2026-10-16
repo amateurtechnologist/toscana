@@ -41,10 +41,10 @@ The local Worker is normally available at `http://localhost:8787`. Request
 
 ## Deploy
 
-Authenticate with the Cloudflare CLI, then deploy the Worker and Container:
+Authenticate with Wrangler, then deploy the Worker and Container:
 
 ```sh
-cf auth login
+npx wrangler login
 npm run deploy
 ```
 
