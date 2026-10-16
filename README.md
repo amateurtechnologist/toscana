@@ -55,53 +55,6 @@ npm run dev
 The local Worker is normally available at `http://localhost:8787`. Request
 `/healthz` to check the Worker and Container path.
 
-## Standalone deployment
-
-The Gateway process does not require Cloudflare at runtime. It can run as a
-long-lived Node.js container on an always-on PC, NAS, Raspberry Pi, or Oracle
-Cloud Always Free VM. The host only needs outbound HTTPS/WebSocket access; no
-public inbound port is required.
-
-Create `.env` from `.env.example`, set the real bot token and the category
-values, then run:
-
-```sh
-docker compose up -d --build
-docker compose logs -f toscana
-curl http://127.0.0.1:8080/healthz
-```
-
-The container uses `restart: unless-stopped`, so the Gateway reconnects after
-process or VM restarts. Do not run this instance and the Cloudflare Container
-with the same bot token at the same time; wait for `gateway_ready` here, then
-disable the Cloudflare wake-up/deployment to avoid duplicate Gateway sessions.
-
-### Oracle Cloud: private VM deployment
-
-For a VM without a public IP, use the self-hosted GitHub Actions Runner. It
-makes an outbound connection to GitHub, so no inbound SSH or public IP is
-required. OCI Vault is not required.
-
-The repository is currently public only so the one-time bootstrap can be
-downloaded. In GitHub, open Settings → Actions → Runners → New self-hosted
-runner → Linux x64 and copy the short-lived registration token. Run
-`oracle/bootstrap.sh` as root on the VM with that token:
-
-```sh
-export TOSCANA_RUNNER_TOKEN='short-lived-github-runner-token'
-curl -fsSL https://raw.githubusercontent.com/amateurtechnologist/toscana/main/oracle/bootstrap.sh | bash
-```
-
-After the Runner reports online, immediately change the repository visibility
-back to private. The Runner keeps its local checkout and connects outbound to
-GitHub; it does not need an inbound IP.
-
-The Runner itself runs as the existing `ubuntu` or `opc` user; root is used
-only for the one-time Docker and service installation. Then add
-`DISCORD_TOKEN` under GitHub Settings → Secrets and variables → Actions and
-run `Deploy to Oracle VM`. The workflow creates `.env` with mode `600` and
-starts Docker Compose on the VM.
-
 ## Deploy
 
 Enable the Message Content privileged intent in the Discord Developer Portal.
@@ -150,8 +103,8 @@ The Worker has a five-minute Cron trigger that requests the Container health
 endpoint. This is intentional: a Durable Object binding does not start its
 Container until the object receives a request. The scheduled wake-up starts
 the Gateway after deployment and reactivates it before the one-hour idle
-timeout. `container_wakeup`, `container_started`, `gateway_socket_open`, and
-`gateway_ready` are the relevant log events.
+timeout. `container_wakeup`, `container_started`,
+`gateway_socket_open`, and `gateway_ready` are the relevant log events.
 
 ## Configure Gateway Forward
 
@@ -163,12 +116,13 @@ In the same Cloudflare account:
 3. Select the deployed `toscana` Worker as the Forward target.
 4. Verify the response contains `x-toscana-gateway: container`.
 
-The API payload shape is in [`gateway-policy.example.json`](./gateway-policy.example.json).
+The API payload shape is in
+[`gateway-policy.example.json`](./gateway-policy.example.json).
 Replace the worker ID with the deployed Worker's 32-character ID; do not put
 an API token in this repository.
 
-Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT
-tunnels, and traffic excluded from inspection bypass the Gateway Worker.
+Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT tunnels,
+and traffic excluded from inspection bypass the Gateway Worker.
 
 ## Container persistence
 
