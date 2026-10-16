@@ -1,6 +1,6 @@
 # toscana
 
-Cloudflare Container + Cloudflare One Gateway Forward scaffold.
+Cloudflare Container + Cloudflare One Gateway Forward + Discord Gateway.
 
 ## Architecture
 
@@ -15,11 +15,21 @@ TOSCANA_CONTAINER → ToscanaContainer Durable Object
           │
           ▼
 Docker image on port 8080
+          │
+          ▼
+Discord Gateway → MESSAGE_CREATE → native Message Forwarding API
 ```
 
 `GatewayMiddleware` deliberately does not call `next()`. Gateway's
 continuation preserves the original upstream destination, so this Worker
 routes the request directly to the Container Durable Object instead.
+
+The Container keeps one Discord Gateway session open. It checks the
+`channel_type` included in each `MESSAGE_CREATE` event, forwards only thread
+messages, and checks the source channel/guild against the blacklist. It never
+builds or stores a list of active thread IDs. Forwarding uses Discord's native
+Message Forwarding API (`message_reference.type = 1`), so the original content
+and attachments are represented by Discord without a second fetch.
 
 The default `fetch` handler is available for local development and health
 checks. Production access is expected to come through a Cloudflare One
@@ -32,6 +42,7 @@ and Workers enabled.
 
 ```sh
 npm install
+npm test
 npm run typecheck
 npm run dev
 ```
@@ -40,6 +51,31 @@ The local Worker is normally available at `http://localhost:8787`. Request
 `/healthz` to check the Worker and Container path.
 
 ## Deploy
+
+Enable the Message Content privileged intent in the Discord Developer Portal.
+The bot also needs `View Channel` in source threads and `View Channel` plus
+`Send Messages` in the target channel.
+
+Set the token and target channel as Worker secrets:
+
+```sh
+npx wrangler secret put DISCORD_TOKEN
+npx wrangler secret put TOSCANA_FORWARD_CHANNEL_ID
+```
+
+Set optional blacklist IDs as comma- or whitespace-separated Worker vars in
+`wrangler.jsonc` (or in the dashboard):
+
+```jsonc
+{
+  "vars": {
+    "TOSCANA_BLACKLIST_CHANNEL_IDS": "thread-id-to-ignore",
+    "TOSCANA_BLACKLIST_GUILD_IDS": "guild-id-to-ignore"
+  }
+}
+```
+
+These are exception lists only; they are not an inventory of threads.
 
 Authenticate with Wrangler, then deploy the Worker and Container:
 

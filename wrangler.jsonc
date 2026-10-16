@@ -6,6 +6,13 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "vars": {
+    "TOSCANA_BLACKLIST_CHANNEL_IDS": "",
+    "TOSCANA_BLACKLIST_GUILD_IDS": ""
+  },
+  "secrets": {
+    "required": ["DISCORD_TOKEN", "TOSCANA_FORWARD_CHANNEL_ID"]
+  },
   "observability": {
     "enabled": true,
     "logs": { "enabled": true },

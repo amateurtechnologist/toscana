@@ -8,13 +8,25 @@ import type {
 const CONTAINER_INSTANCE = "gateway";
 const NO_BODY_STATUSES = new Set([204, 205, 304]);
 
-export class ToscanaContainer extends Container {
+export class ToscanaContainer extends Container<Cloudflare.Env> {
   defaultPort = 8080;
-  sleepAfter = "10m";
-  envVars = {
+  sleepAfter = "1h";
+  envVars: Record<string, string> = {
     NODE_ENV: "production",
     TOSCANA_SERVICE: "container",
   };
+
+  constructor(ctx: DurableObjectState<{}>, env: Cloudflare.Env) {
+    super(ctx, env);
+    this.envVars = {
+      NODE_ENV: "production",
+      TOSCANA_SERVICE: "container",
+      DISCORD_TOKEN: env.DISCORD_TOKEN,
+      TOSCANA_FORWARD_CHANNEL_ID: env.TOSCANA_FORWARD_CHANNEL_ID,
+      TOSCANA_BLACKLIST_CHANNEL_IDS: env.TOSCANA_BLACKLIST_CHANNEL_IDS ?? "",
+      TOSCANA_BLACKLIST_GUILD_IDS: env.TOSCANA_BLACKLIST_GUILD_IDS ?? "",
+    };
+  }
 
   override onStart(): void {
     console.log(JSON.stringify({ event: "container_started" }));
@@ -31,6 +43,13 @@ export class ToscanaContainer extends Container {
         error: error instanceof Error ? error.message : String(error),
       }),
     );
+  }
+
+  override async onActivityExpired(): Promise<void> {
+    // The container owns a long-lived outbound Gateway connection. Letting the
+    // inactivity alarm stop it would create an event gap after the default
+    // sleep timeout, so keep the single Gateway instance alive.
+    this.renewActivityTimeout();
   }
 }
 
