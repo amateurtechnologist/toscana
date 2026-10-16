@@ -76,12 +76,27 @@ process or VM restarts. Do not run this instance and the Cloudflare Container
 with the same bot token at the same time; wait for `gateway_ready` here, then
 disable the Cloudflare wake-up/deployment to avoid duplicate Gateway sessions.
 
-### Oracle Cloud
+### Oracle Cloud: private VM deployment
 
-[`oracle/bootstrap.sh`](./oracle/bootstrap.sh) installs Docker without needing
-the Discord token. A VM without a public IP needs an approved outbound
-deployment transport, such as a self-hosted Runner or OCI Cloud Agent Run
-Command; GitHub-hosted SSH deployment is not applicable.
+For a VM without a public IP, use the self-hosted GitHub Actions Runner. It
+makes an outbound connection to GitHub, so no inbound SSH or public IP is
+required. OCI Vault is not required.
+
+Before registering the Runner, make this repository private. In GitHub, open
+Settings → Actions → Runners → New self-hosted runner → Linux x64 and copy the
+short-lived registration token. Run `oracle/bootstrap.sh` as root on the VM
+with that token:
+
+```sh
+export TOSCANA_RUNNER_TOKEN='short-lived-github-runner-token'
+curl -fsSL https://raw.githubusercontent.com/amateurtechnologist/toscana/main/oracle/bootstrap.sh | bash
+```
+
+The Runner itself runs as the existing `ubuntu` or `opc` user; root is used
+only for the one-time Docker and service installation. Then add
+`DISCORD_TOKEN` under GitHub Settings → Secrets and variables → Actions and
+run `Deploy to Oracle VM`. The workflow creates `.env` with mode `600` and
+starts Docker Compose on the VM.
 
 ## Deploy
 
