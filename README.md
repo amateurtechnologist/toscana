@@ -90,6 +90,7 @@ Actions:
 
 - Secret `DISCORD_TOKEN`: the Discord bot token
 - Secret `OCI_SSH_PRIVATE_KEY`: the private SSH key for the VM
+- Secret `OCI_SSH_HOST_KEY`: the VM's pinned SSH host-key line
 - Variable `OCI_HOST`: the VM public IP or hostname
 - Variable `OCI_USER`: `ubuntu` or `opc`
 
