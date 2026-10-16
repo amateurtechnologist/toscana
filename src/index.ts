@@ -1,0 +1,118 @@
+import { Container } from "@cloudflare/containers";
+import { WorkerEntrypoint } from "cloudflare:workers";
+import type {
+  GatewayMiddlewareContext,
+  GatewayMiddlewareNext,
+} from "@cloudflare/zt-types";
+
+const CONTAINER_INSTANCE = "gateway";
+const NO_BODY_STATUSES = new Set([204, 205, 304]);
+
+export class ToscanaContainer extends Container {
+  defaultPort = 8080;
+  sleepAfter = "10m";
+  envVars = {
+    NODE_ENV: "production",
+    TOSCANA_SERVICE: "container",
+  };
+
+  override onStart(): void {
+    console.log(JSON.stringify({ event: "container_started" }));
+  }
+
+  override onStop(params: { exitCode?: number; reason?: string }): void {
+    console.log(JSON.stringify({ event: "container_stopped", ...params }));
+  }
+
+  override onError(error: unknown): void {
+    console.error(
+      JSON.stringify({
+        event: "container_error",
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+}
+
+function markGatewayRequest(request: Request): Request {
+  const headers = new Headers(request.headers);
+  headers.set("x-toscana-gateway", "cloudflare-one");
+  return new Request(request, { headers });
+}
+
+function markGatewayResponse(request: Request, response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("x-toscana-gateway", "container");
+
+  const noBody =
+    request.method === "HEAD" || NO_BODY_STATUSES.has(response.status);
+
+  return new Response(noBody ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function containerUnavailable(request: Request, error: unknown): Response {
+  console.error(
+    JSON.stringify({
+      event: "container_request_failed",
+      method: request.method,
+      path: new URL(request.url).pathname,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+
+  return Response.json(
+    { error: "container_unavailable" },
+    {
+      status: 502,
+      headers: { "cache-control": "no-store" },
+    },
+  );
+}
+
+async function forwardToContainer(
+  request: Request,
+  env: Cloudflare.Env,
+): Promise<Response> {
+  const container = env.TOSCANA_CONTAINER.getByName(CONTAINER_INSTANCE);
+  return container.fetch(markGatewayRequest(request));
+}
+
+/**
+ * Entry point selected by a Cloudflare One Gateway Forward policy.
+ *
+ * `next()` is intentionally not called: it preserves the original upstream
+ * destination, while this Worker replaces that destination with the
+ * Container Durable Object binding.
+ */
+export class GatewayMiddleware extends WorkerEntrypoint<Cloudflare.Env> {
+  async handle(
+    request: Request,
+    _context: GatewayMiddlewareContext,
+    _next: GatewayMiddlewareNext,
+  ): Promise<Response> {
+    try {
+      const response = await forwardToContainer(request, this.env);
+      return markGatewayResponse(request, response);
+    } catch (error) {
+      return containerUnavailable(request, error);
+    }
+  }
+}
+
+export default {
+  async fetch(request: Request, env: Cloudflare.Env): Promise<Response> {
+    if (new URL(request.url).pathname === "/healthz") {
+      return Response.json({ ok: true, service: "toscana-gateway" });
+    }
+
+    try {
+      return await forwardToContainer(request, env);
+    } catch (error) {
+      return containerUnavailable(request, error);
+    }
+  },
+} satisfies ExportedHandler<Cloudflare.Env>;

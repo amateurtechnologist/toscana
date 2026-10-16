@@ -1,0 +1,21 @@
+{
+  "name": "toscana",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cf dev",
+    "typecheck": "cf workers types && tsc --noEmit",
+    "build": "cf workers types && tsc --noEmit && cf build",
+    "deploy": "cf deploy"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261016.1",
+    "@cloudflare/zt-types": "^2026.10.1",
+    "cf": "^1.0.0-beta.17",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.151.1"
+  }
+}

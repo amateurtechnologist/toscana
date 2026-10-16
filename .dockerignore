@@ -1,0 +1,5 @@
+.git
+.cloudflare
+.wrangler
+node_modules
+npm-debug.log*

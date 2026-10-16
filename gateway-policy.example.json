@@ -1,0 +1,13 @@
+{
+  "name": "Forward selected HTTP traffic to Toscana",
+  "enabled": true,
+  "precedence": 1000,
+  "action": "forward",
+  "filters": ["http"],
+  "traffic": "http.request.host == \"api.example.com\"",
+  "rule_settings": {
+    "forward": {
+      "worker_id": "<32-character-worker-id>"
+    }
+  }
+}
