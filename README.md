@@ -82,15 +82,19 @@ For a VM without a public IP, use the self-hosted GitHub Actions Runner. It
 makes an outbound connection to GitHub, so no inbound SSH or public IP is
 required. OCI Vault is not required.
 
-Before registering the Runner, make this repository private. In GitHub, open
-Settings → Actions → Runners → New self-hosted runner → Linux x64 and copy the
-short-lived registration token. Run `oracle/bootstrap.sh` as root on the VM
-with that token:
+The repository is currently public only so the one-time bootstrap can be
+downloaded. In GitHub, open Settings → Actions → Runners → New self-hosted
+runner → Linux x64 and copy the short-lived registration token. Run
+`oracle/bootstrap.sh` as root on the VM with that token:
 
 ```sh
 export TOSCANA_RUNNER_TOKEN='short-lived-github-runner-token'
 curl -fsSL https://raw.githubusercontent.com/amateurtechnologist/toscana/main/oracle/bootstrap.sh | bash
 ```
+
+After the Runner reports online, immediately change the repository visibility
+back to private. The Runner keeps its local checkout and connects outbound to
+GitHub; it does not need an inbound IP.
 
 The Runner itself runs as the existing `ubuntu` or `opc` user; root is used
 only for the one-time Docker and service installation. Then add
