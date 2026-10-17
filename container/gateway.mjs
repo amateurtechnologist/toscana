@@ -84,12 +84,6 @@ export function evaluateMessage(message, config) {
   if (matchesNonForwardPattern(message.content)) {
     return { forward: false, reason: "content_filter" };
   }
-  if (config.blacklistedChannelIds.has(message.channel_id)) {
-    return { forward: false, reason: "blacklisted_channel" };
-  }
-  if (message.guild_id && config.blacklistedGuildIds.has(message.guild_id)) {
-    return { forward: false, reason: "blacklisted_guild" };
-  }
   if (config.targetChannelIds?.has(message.channel_id)) {
     return { forward: false, reason: "target_channel" };
   }
