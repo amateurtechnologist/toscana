@@ -29,6 +29,7 @@
     {
       "name": "toscana-container",
       "class_name": "ToscanaContainer",
+      "scheduling_policy": "default",
       "image": "./Dockerfile",
       "instance_type": "lite",
       "max_instances": 1
