@@ -7,9 +7,9 @@ import {
   createGatewayConfig,
   DiscordGatewayClient,
   evaluateMessage,
+  matchesNonForwardPattern,
   ForwardQueue,
   forwardMessage,
-  parseSnowflakeList,
   resolveMessageRoute,
 } from "./gateway.mjs";
 
@@ -24,8 +24,6 @@ const config = {
     ["222", { name: "B", categoryId: "222", targetChannelId: "998" }],
   ]),
   targetChannelIds: new Set(["999", "998"]),
-  blacklistedChannelIds: new Set(["888"]),
-  blacklistedGuildIds: new Set(["777"]),
   intents: 33281,
 };
 
@@ -41,13 +39,6 @@ function message(overrides = {}) {
   };
 }
 
-test("parseSnowflakeList keeps only numeric IDs", () => {
-  assert.deepEqual(
-    [...parseSnowflakeList("100, 200\ninvalid 300")],
-    ["100", "200", "300"],
-  );
-});
-
 test("createGatewayConfig requires the token and target channel", () => {
   assert.throws(
     () => createGatewayConfig({ DISCORD_TOKEN: "token" }),
@@ -59,26 +50,33 @@ test("createGatewayConfig requires the token and target channel", () => {
     CATEGORY_A_FORWARD_CHANNEL_ID: "123",
     CATEGORY_B_ID: "200",
     CATEGORY_B_FORWARD_CHANNEL_ID: "456",
-    TOSCANA_BLACKLIST_CHANNEL_IDS: "456,789",
   });
   assert.deepEqual(result.routes, [
     { name: "A", categoryId: "100", targetChannelId: "123" },
     { name: "B", categoryId: "200", targetChannelId: "456" },
   ]);
-  assert.deepEqual([...result.blacklistedChannelIds], ["456", "789"]);
 });
 
-test("non-blacklisted guild messages are candidates", () => {
+test("guild messages pass routing filters", () => {
   assert.deepEqual(evaluateMessage(message(), config), {
     forward: true,
     reason: "message_candidate",
   });
   assert.equal(evaluateMessage(message({ channel_type: 0 }), config).forward, true);
-  assert.equal(evaluateMessage(message({ channel_id: "888" }), config).reason, "blacklisted_channel");
-  assert.equal(evaluateMessage(message({ guild_id: "777" }), config).reason, "blacklisted_guild");
   assert.equal(evaluateMessage(message({ author: { id: "321", bot: true } }), config).reason, "bot_message");
   assert.equal(evaluateMessage(message({ channel_id: "999" }), config).reason, "target_channel");
   assert.equal(evaluateMessage(message({ type: 21 }), config).reason, "unsupported_message_type");
+});
+
+test("provided non-forward patterns suppress messages", () => {
+  assert.equal(matchesNonForwardPattern("hello"), true);
+  assert.equal(matchesNonForwardPattern("https://example.com"), false);
+  assert.equal(matchesNonForwardPattern("https://a.test https://b.test"), false);
+  assert.equal(matchesNonForwardPattern("https://a.test hello"), true);
+  assert.equal(
+    evaluateMessage(message({ content: "hello" }), config).reason,
+    "content_filter",
+  );
 });
 
 test("route resolution maps thread messages to their category target", async () => {
