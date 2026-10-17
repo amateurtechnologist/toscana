@@ -101,9 +101,12 @@ deployment.
 
 The Worker has a five-minute Cron trigger that requests the Container health
 endpoint. This is intentional: a Durable Object binding does not start its
-Container until the object receives a request. The scheduled wake-up starts
-the Gateway after deployment and reactivates it before the one-hour idle
-timeout. `container_wakeup`, `container_started`, `gateway_socket_open`, and
+Container until the object receives a request. The Durable Object starts the
+Container explicitly, waits for `/healthz` before forwarding, monitors exits,
+and schedules recovery after an abnormal stop. Its inactivity timeout is
+15 minutes, so the Cron wake-up keeps the Gateway active without relying on a
+custom `onActivityExpired()` override. `container_wakeup`,
+`container_ready`, `container_exited_with_error`, `gateway_socket_open`, and
 `gateway_ready` are the relevant log events.
 
 ## Configure Gateway Forward
