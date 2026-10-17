@@ -66,11 +66,16 @@ const server = createServer((request, response) => {
   request.resume();
 
   const health = url.pathname === "/healthz";
+  const gatewayStatus = gateway?.status() ?? { state: "startup_failed" };
+  const gatewayUnavailable =
+    Boolean(startupError) ||
+    !gateway ||
+    gatewayStatus.state === "blocked";
   const payload = health
     ? {
-        ok: !startupError && Boolean(gateway),
+        ok: !gatewayUnavailable,
         service: "toscana-container",
-        gateway: gateway?.status() ?? { state: "startup_failed" },
+        gateway: gatewayStatus,
       }
     : {
         ok: true,
@@ -80,14 +85,39 @@ const server = createServer((request, response) => {
         gateway: request.headers["x-toscana-gateway"] ?? null,
       };
 
-  response.statusCode = health && (!gateway || startupError) ? 503 : 200;
+  response.statusCode = health && gatewayUnavailable ? 503 : 200;
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(JSON.stringify(payload));
 });
 
 server.on("error", (error) => {
-  console.error(error);
-  process.exitCode = 1;
+  console.error(
+    JSON.stringify({
+      event: "http_server_failed",
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  process.exit(1);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error(
+    JSON.stringify({
+      event: "uncaught_exception",
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (error) => {
+  console.error(
+    JSON.stringify({
+      event: "unhandled_rejection",
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+  process.exit(1);
 });
 
 function shutdown() {
