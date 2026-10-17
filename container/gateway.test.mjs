@@ -5,6 +5,7 @@ import {
   createForwardPayload,
   createExpandedPayload,
   createGatewayConfig,
+  DiscordGatewayClient,
   evaluateMessage,
   ForwardQueue,
   forwardMessage,
@@ -185,4 +186,25 @@ test("ForwardQueue preserves send order without storing thread state", async () 
   ]);
   assert.deepEqual(sent, ["1", "2", "3"]);
   assert.deepEqual(results, ["1", "2", "3"]);
+});
+
+test("Gateway reports a blocked state when WebSocket support is unavailable", () => {
+  const client = new DiscordGatewayClient({
+    config,
+    onMessage: async () => {},
+    WebSocketImpl: null,
+    logger: { info() {}, warn() {}, error() {} },
+  });
+
+  client.start();
+
+  assert.deepEqual(client.status(), {
+    state: "blocked",
+    session: false,
+    sequence: null,
+    reconnect_attempt: 0,
+    last_event_at: null,
+    last_error: "Node WebSocket is unavailable",
+    last_close: null,
+  });
 });
