@@ -28,7 +28,8 @@ The Container keeps one Discord Gateway session open. For each guild message it
 resolves the source channel's category through the Discord API and routes
 category A to its A' channel and category B to its B' channel. A' and B' are
 excluded from forwarding to prevent loops. It never builds or stores a list of
-active thread IDs; the blacklist remains an exception list.
+active thread IDs. Messages matching the non-forward content patterns are
+discarded before category routing.
 
 Forwarding recreates the same visual shape as `/expand`: messages without
 links use a quote embed, link messages use normal content, attachments are
@@ -77,16 +78,12 @@ Set category and target channel IDs as ordinary Worker vars in
     "CATEGORY_A_ID": "category-id-a",
     "CATEGORY_A_FORWARD_CHANNEL_ID": "channel-id-a-prime",
     "CATEGORY_B_ID": "category-id-b",
-    "CATEGORY_B_FORWARD_CHANNEL_ID": "channel-id-b-prime",
-    "TOSCANA_BLACKLIST_CHANNEL_IDS": "thread-id-to-ignore",
-    "TOSCANA_BLACKLIST_GUILD_IDS": "guild-id-to-ignore"
+    "CATEGORY_B_FORWARD_CHANNEL_ID": "channel-id-b-prime"
   }
 }
 ```
 
-The A' target must be inside category A and B' inside category B. The
-blacklist values are exception lists only; they are not an inventory of
-threads.
+The A' target must be inside category A and B' inside category B.
 
 Authenticate with Wrangler, then deploy the Worker and Container:
 
