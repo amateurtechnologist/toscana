@@ -12,9 +12,10 @@ const MESSAGE_CONTENT_INTENT = 1 << 15;
 export const GATEWAY_INTENTS =
   GUILDS_INTENT | GUILD_MESSAGES_INTENT | MESSAGE_CONTENT_INTENT;
 
-const FATAL_CLOSE_CODES = new Set([4003, 4004, 4005, 4010, 4011, 4012, 4013, 4014]);
+const FATAL_CLOSE_CODES = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
 const RESET_SESSION_CLOSE_CODES = new Set([1000, 1001, 4007, 4009]);
 const MAX_RECONNECT_DELAY_MS = 30_000;
+const MAX_API_RETRIES = 3;
 const MAX_FORWARD_RETRIES = 3;
 const MAX_ATTACHMENT_COUNT = 10;
 const MAX_ATTACHMENT_SIZE = 8 * 1024 * 1024;
@@ -127,16 +128,38 @@ function retryAfterMs(response, data) {
   return Math.min(Math.max(value * 1000, 50), 15_000);
 }
 
+function retryableApiStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function transientRetryDelayMs(response, data, attempt) {
+  if (response.status === 429) return retryAfterMs(response, data);
+  return Math.min(1000 * 2 ** attempt, 5000);
+}
+
 async function discordJson(path, config, fetchImpl, init = {}) {
   const headers = new Headers(init.headers);
   headers.set("authorization", `Bot ${config.token}`);
-  const response = await fetchImpl(`${DISCORD_API}${path}`, {
-    ...init,
-    headers,
-  });
-  const data = await responseData(response);
-  if (!response.ok) throw new DiscordApiError(response.status, data);
-  return data;
+
+  for (let attempt = 0; ; attempt += 1) {
+    const response = await fetchImpl(`${DISCORD_API}${path}`, {
+      ...init,
+      headers,
+    });
+    const data = await responseData(response);
+    if (response.ok) return data;
+
+    if (!retryableApiStatus(response.status) || attempt >= MAX_API_RETRIES) {
+      throw new DiscordApiError(response.status, data);
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(
+        resolve,
+        transientRetryDelayMs(response, data, attempt),
+      ),
+    );
+  }
 }
 
 export async function resolveMessageRoute(
@@ -485,10 +508,11 @@ function closeSocket(socket, code, reason) {
   }
 }
 
-function messageText(data) {
+async function messageText(data) {
   if (typeof data === "string") return data;
   if (Buffer.isBuffer(data)) return data.toString("utf8");
   if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (typeof Blob !== "undefined" && data instanceof Blob) return data.text();
   return String(data);
 }
 
@@ -522,10 +546,23 @@ export class DiscordGatewayClient {
     this.running = false;
     this.state = "stopped";
     this.lastEventAt = null;
+    this.lastError = null;
+    this.lastClose = null;
   }
 
   start() {
     if (this.running) return;
+    if (typeof this.WebSocketImpl !== "function") {
+      this.state = "blocked";
+      this.lastError = "Node WebSocket is unavailable";
+      this.logger.error(
+        JSON.stringify({
+          event: "gateway_start_failed",
+          error: this.lastError,
+        }),
+      );
+      return;
+    }
     this.running = true;
     this.state = "starting";
     void this.openSocket(false);
@@ -539,12 +576,13 @@ export class DiscordGatewayClient {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    if (this.socket) {
-      if (typeof this.socket.removeAllListeners === "function") {
-        this.socket.removeAllListeners();
+    const socket = this.socket;
+    this.socket = null;
+    if (socket) {
+      if (typeof socket.removeAllListeners === "function") {
+        socket.removeAllListeners();
       }
-      closeSocket(this.socket, 1000, "shutdown");
-      this.socket = null;
+      closeSocket(socket, 1000, "shutdown");
     }
   }
 
@@ -555,18 +593,21 @@ export class DiscordGatewayClient {
       sequence: this.sequence,
       reconnect_attempt: this.reconnectAttempt,
       last_event_at: this.lastEventAt,
+      last_error: this.lastError,
+      last_close: this.lastClose,
     };
   }
 
   async getBaseGatewayUrl() {
     if (this.baseGatewayUrl) return this.baseGatewayUrl;
 
-    const response = await this.fetchImpl(`${DISCORD_API}/gateway/bot`, {
-      headers: { authorization: `Bot ${this.config.token}` },
-    });
-    const data = await responseData(response);
-    if (!response.ok || typeof data?.url !== "string") {
-      throw new DiscordApiError(response.status, data);
+    const data = await discordJson(
+      "/gateway/bot",
+      this.config,
+      this.fetchImpl,
+    );
+    if (typeof data?.url !== "string") {
+      throw new Error("Discord Gateway response did not include a URL");
     }
 
     this.baseGatewayUrl = data.url;
@@ -596,20 +637,25 @@ export class DiscordGatewayClient {
         this.logger.info(JSON.stringify({ event: "gateway_socket_open" }));
       });
       bindSocketEvent(socket, "message", (data) => {
-        void this.handleMessage(data).catch((error) => {
+        if (socket !== this.socket) return;
+        void this.handleMessage(data, socket).catch((error) => {
+          this.lastError = error instanceof Error ? error.message : String(error);
           this.logger.error(
             JSON.stringify({
               event: "gateway_message_failed",
-              error: error instanceof Error ? error.message : String(error),
+              error: this.lastError,
             }),
           );
+          this.requestReconnect(Boolean(this.sessionId), "message_failed");
         });
       });
       bindSocketEvent(socket, "error", (error) => {
+        if (socket !== this.socket) return;
+        this.lastError = error instanceof Error ? error.message : String(error);
         this.logger.error(
           JSON.stringify({
             event: "gateway_socket_error",
-            error: error instanceof Error ? error.message : String(error),
+            error: this.lastError,
           }),
         );
       });
@@ -617,27 +663,32 @@ export class DiscordGatewayClient {
         this.handleClose(socket, code, reason);
       });
     } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error);
       this.logger.error(
         JSON.stringify({
           event: "gateway_connect_failed",
-          error: error instanceof Error ? error.message : String(error),
+          error: this.lastError,
         }),
       );
-      this.scheduleReconnect(shouldResume);
+      this.scheduleReconnect(shouldResume, "connect_failed");
     }
   }
 
-  async handleMessage(raw) {
+  async handleMessage(raw, socket = this.socket) {
+    if (socket && socket !== this.socket) return;
+
     let packet;
     try {
-      packet = JSON.parse(messageText(raw));
+      packet = JSON.parse(await messageText(raw));
     } catch (error) {
+      this.lastError = error instanceof Error ? error.message : String(error);
       this.logger.error(
         JSON.stringify({
           event: "gateway_decode_failed",
-          error: error instanceof Error ? error.message : String(error),
+          error: this.lastError,
         }),
       );
+      this.requestReconnect(Boolean(this.sessionId), "decode_failed");
       return;
     }
 
@@ -651,7 +702,7 @@ export class DiscordGatewayClient {
         await this.handleDispatch(packet.t, packet.d);
         break;
       case 1:
-        this.sendHeartbeat();
+        this.sendHeartbeat(socket);
         break;
       case 7:
         this.requestReconnect(true, "gateway_reconnect");
@@ -661,8 +712,8 @@ export class DiscordGatewayClient {
         this.requestReconnect(Boolean(packet.d), "invalid_session");
         break;
       case 10:
-        this.startHeartbeat(packet.d?.heartbeat_interval);
-        this.sendIdentifyOrResume();
+        this.startHeartbeat(packet.d?.heartbeat_interval, socket);
+        this.sendIdentifyOrResume(socket);
         break;
       case 11:
         this.awaitingHeartbeatAck = false;
@@ -678,6 +729,7 @@ export class DiscordGatewayClient {
       this.resumeGatewayUrl = data?.resume_gateway_url ?? this.baseGatewayUrl;
       this.userId = data?.user?.id;
       this.reconnectAttempt = 0;
+      this.lastError = null;
       this.state = "connected";
       this.logger.info(
         JSON.stringify({
@@ -709,20 +761,22 @@ export class DiscordGatewayClient {
     }
   }
 
-  sendIdentifyOrResume() {
+  sendIdentifyOrResume(socket = this.socket) {
     if (this.connectMode === "resume" && this.sessionId) {
-      this.send({
+      if (!this.send({
         op: 6,
         d: {
           token: this.config.token,
           session_id: this.sessionId,
           seq: this.sequence,
         },
-      });
+      }, socket)) {
+        this.requestReconnect(true, "resume_send_failed");
+      }
       return;
     }
 
-    this.send({
+    if (!this.send({
       op: 2,
       d: {
         token: this.config.token,
@@ -739,21 +793,23 @@ export class DiscordGatewayClient {
           afk: false,
         },
       },
-    });
+    }, socket)) {
+      this.requestReconnect(false, "identify_send_failed");
+    }
   }
 
-  sendHeartbeat() {
-    if (!websocketIsOpen(this.socket)) return;
+  sendHeartbeat(socket = this.socket) {
+    if (socket !== this.socket || !websocketIsOpen(socket)) return;
     if (this.awaitingHeartbeatAck) {
       this.logger.warn(JSON.stringify({ event: "gateway_heartbeat_timeout" }));
-      closeSocket(this.socket, 4000, "heartbeat timeout");
+      closeSocket(socket, 4000, "heartbeat timeout");
       return;
     }
     this.awaitingHeartbeatAck = true;
-    this.send({ op: 1, d: this.sequence });
+    this.send({ op: 1, d: this.sequence }, socket);
   }
 
-  startHeartbeat(interval) {
+  startHeartbeat(interval, socket = this.socket) {
     const heartbeatInterval = Number(interval);
     if (!Number.isFinite(heartbeatInterval) || heartbeatInterval <= 0) {
       throw new Error("Gateway Hello did not include a valid heartbeat interval");
@@ -761,9 +817,10 @@ export class DiscordGatewayClient {
 
     this.clearHeartbeat();
     this.heartbeatStartTimer = setTimeout(() => {
-      this.sendHeartbeat();
+      if (socket !== this.socket) return;
+      this.sendHeartbeat(socket);
       this.heartbeatTimer = setInterval(
-        () => this.sendHeartbeat(),
+        () => this.sendHeartbeat(socket),
         heartbeatInterval,
       );
     }, Math.floor(this.random() * heartbeatInterval));
@@ -781,23 +838,25 @@ export class DiscordGatewayClient {
     this.awaitingHeartbeatAck = false;
   }
 
-  send(payload) {
-    if (!websocketIsOpen(this.socket)) return false;
-    this.socket.send(JSON.stringify(payload));
+  send(payload, socket = this.socket) {
+    if (socket !== this.socket || !websocketIsOpen(socket)) return false;
+    socket.send(JSON.stringify(payload));
     return true;
   }
 
   requestReconnect(resume, reason) {
     if (!this.running) return;
+    const socket = this.socket;
     this.nextResume = Boolean(resume && this.sessionId);
     this.scheduleReconnect(this.nextResume, reason);
-    closeSocket(this.socket, 4000, "reconnect");
+    closeSocket(socket, 4000, "reconnect");
   }
 
   handleClose(socket, code, reason) {
     if (socket !== this.socket) return;
     this.socket = null;
     this.clearHeartbeat();
+    this.lastClose = { code, reason: String(reason ?? "") };
 
     if (!this.running) return;
 
@@ -808,12 +867,15 @@ export class DiscordGatewayClient {
         JSON.stringify({
           event: "gateway_blocked",
           code,
-          reason: messageText(reason),
+          reason: String(reason ?? ""),
         }),
       );
       return;
     }
 
+    if (code === 4008) {
+      this.reconnectAttempt = Math.max(this.reconnectAttempt, 3);
+    }
     if (RESET_SESSION_CLOSE_CODES.has(code)) this.clearSession();
     this.scheduleReconnect(Boolean(this.sessionId), `close_${code}`);
   }
