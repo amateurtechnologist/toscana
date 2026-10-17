@@ -24,12 +24,16 @@ function isSnowflake(value) {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
-export function parseSnowflakeList(value) {
-  return new Set(
-    String(value ?? "")
-      .split(/[\s,]+/)
-      .map((item) => item.trim())
-      .filter(isSnowflake),
+const NON_FORWARD_MESSAGE_PATTERNS = [
+  /^(?:[^h]|h(?:(?![\s\S])|[^t])|ht(?:(?![\s\S])|[^t])|htt(?:(?![\s\S])|[^p]))/i,
+  /^(https?:\/\/\S+\s+)+([^h\s]|h(?:(?![\s\S])|[^t])|ht(?:(?![\s\S])|[^t])|htt(?:(?![\s\S])|[^p]))/i,
+  /^(https?:\/\/\S+\s+)+http(?:(?![\s\S])|[^s:]|s(?:(?![\s\S])|[^:]))/i,
+  /^(https?:\/\/\S+\s+)+https?:(?:(?![\s\S])|[^/]|\/(?:(?![\s\S])|[^/]|\/(?:(?![\s\S])|\s)))/i,
+];
+
+export function matchesNonForwardPattern(content) {
+  return NON_FORWARD_MESSAGE_PATTERNS.some((pattern) =>
+    pattern.test(String(content ?? "")),
   );
 }
 
@@ -62,8 +66,6 @@ export function createGatewayConfig(env = process.env) {
     routes,
     routesByCategory: new Map(routes.map((route) => [route.categoryId, route])),
     targetChannelIds: new Set(routes.map((route) => route.targetChannelId)),
-    blacklistedChannelIds: parseSnowflakeList(env.TOSCANA_BLACKLIST_CHANNEL_IDS),
-    blacklistedGuildIds: parseSnowflakeList(env.TOSCANA_BLACKLIST_GUILD_IDS),
     gatewayUrl: env.TOSCANA_GATEWAY_URL?.trim() || undefined,
     intents: GATEWAY_INTENTS,
   };
@@ -78,6 +80,9 @@ export function evaluateMessage(message, config) {
   }
   if (!isSnowflake(message.guild_id)) {
     return { forward: false, reason: "not_a_guild_message" };
+  }
+  if (matchesNonForwardPattern(message.content)) {
+    return { forward: false, reason: "content_filter" };
   }
   if (config.blacklistedChannelIds.has(message.channel_id)) {
     return { forward: false, reason: "blacklisted_channel" };
