@@ -1,59 +1,200 @@
-import { Container } from "@cloudflare/containers";
-import { WorkerEntrypoint } from "cloudflare:workers";
+import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type {
   GatewayMiddlewareContext,
   GatewayMiddlewareNext,
 } from "@cloudflare/zt-types";
 
 const CONTAINER_INSTANCE = "gateway";
+const CONTAINER_PORT = 8080;
 const CONTAINER_HEALTH_PATH = "/healthz";
+const CONTAINER_INACTIVITY_TIMEOUT_MS = 15 * 60 * 1000;
+const CONTAINER_READY_TIMEOUT_MS = 30 * 1000;
+const CONTAINER_READY_POLL_MS = 200;
+const CONTAINER_RECOVERY_DELAY_MS = 30 * 1000;
 const NO_BODY_STATUSES = new Set([204, 205, 304]);
 
-export class ToscanaContainer extends Container<Cloudflare.Env> {
-  defaultPort = 8080;
-  sleepAfter = "1h";
-  envVars: Record<string, string> = {
+function logError(event: string, error: unknown, extra = {}) {
+  console.error(
+    JSON.stringify({
+      event,
+      ...extra,
+      error: error instanceof Error ? error.message : String(error),
+    }),
+  );
+}
+
+function containerEnvironment(env: Cloudflare.Env): Record<string, string> {
+  return {
     NODE_ENV: "production",
     TOSCANA_SERVICE: "container",
+    DISCORD_TOKEN: env.DISCORD_TOKEN,
+    CATEGORY_A_ID: env.CATEGORY_A_ID,
+    CATEGORY_A_FORWARD_CHANNEL_ID: env.CATEGORY_A_FORWARD_CHANNEL_ID,
+    CATEGORY_B_ID: env.CATEGORY_B_ID,
+    CATEGORY_B_FORWARD_CHANNEL_ID: env.CATEGORY_B_FORWARD_CHANNEL_ID,
+    TOSCANA_BLACKLIST_CHANNEL_IDS: env.TOSCANA_BLACKLIST_CHANNEL_IDS ?? "",
+    TOSCANA_BLACKLIST_GUILD_IDS: env.TOSCANA_BLACKLIST_GUILD_IDS ?? "",
   };
+}
 
-  constructor(ctx: DurableObjectState<{}>, env: Cloudflare.Env) {
+export class ToscanaContainer extends DurableObject<Cloudflare.Env> {
+  private starting: Promise<void> | undefined;
+  private monitoring: Promise<void> | undefined;
+
+  constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
     super(ctx, env);
-    this.envVars = {
-      NODE_ENV: "production",
-      TOSCANA_SERVICE: "container",
-      DISCORD_TOKEN: env.DISCORD_TOKEN,
-      CATEGORY_A_ID: env.CATEGORY_A_ID,
-      CATEGORY_A_FORWARD_CHANNEL_ID: env.CATEGORY_A_FORWARD_CHANNEL_ID,
-      CATEGORY_B_ID: env.CATEGORY_B_ID,
-      CATEGORY_B_FORWARD_CHANNEL_ID: env.CATEGORY_B_FORWARD_CHANNEL_ID,
-      TOSCANA_BLACKLIST_CHANNEL_IDS: env.TOSCANA_BLACKLIST_CHANNEL_IDS ?? "",
-      TOSCANA_BLACKLIST_GUILD_IDS: env.TOSCANA_BLACKLIST_GUILD_IDS ?? "",
-    };
+
+    const container = ctx.container;
+    if (container?.running) {
+      void ctx
+        .blockConcurrencyWhile(async () => {
+          await container.setInactivityTimeout(
+            CONTAINER_INACTIVITY_TIMEOUT_MS,
+          );
+          this.observeExit();
+        })
+        .catch((error) => logError("container_restore_failed", error));
+    }
   }
 
-  override onStart(): void {
-    console.log(JSON.stringify({ event: "container_started" }));
+  async fetch(request: Request): Promise<Response> {
+    try {
+      await this.ensureReady();
+
+      const url = new URL(request.url);
+      url.protocol = "http:";
+      url.host = "container";
+      const forwarded = new Request(url, request);
+      forwarded.headers.delete("host");
+
+      return await this.ctx.container!.getTcpPort(CONTAINER_PORT).fetch(
+        forwarded,
+      );
+    } catch (error) {
+      logError("container_request_failed", error, {
+        method: request.method,
+        path: new URL(request.url).pathname,
+      });
+      return Response.json(
+        { error: "container_unavailable" },
+        {
+          status: 502,
+          headers: { "cache-control": "no-store" },
+        },
+      );
+    }
   }
 
-  override onStop(params: { exitCode?: number; reason?: string }): void {
-    console.log(JSON.stringify({ event: "container_stopped", ...params }));
+  async alarm(): Promise<void> {
+    try {
+      await this.ensureReady();
+    } catch (error) {
+      logError("container_recovery_failed", error);
+      await this.scheduleRecovery();
+    }
   }
 
-  override onError(error: unknown): void {
-    console.error(
-      JSON.stringify({
-        event: "container_error",
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
+  private async ensureReady(): Promise<void> {
+    this.starting ??= this.startAndWaitForPort().finally(() => {
+      this.starting = undefined;
+    });
+    return this.starting;
   }
 
-  override async onActivityExpired(): Promise<void> {
-    // The container owns a long-lived outbound Gateway connection. Letting the
-    // inactivity alarm stop it would create an event gap after the default
-    // sleep timeout, so keep the single Gateway instance alive.
-    this.renewActivityTimeout();
+  private async startAndWaitForPort(): Promise<void> {
+    const container = this.ctx.container;
+    if (!container) {
+      throw new Error("No container is configured for this Durable Object");
+    }
+
+    if (!container.running) {
+      container.start({
+        enableInternet: true,
+        env: containerEnvironment(this.env),
+      });
+      console.log(
+        JSON.stringify({
+          event: "container_start_requested",
+          instance: CONTAINER_INSTANCE,
+        }),
+      );
+    }
+
+    this.observeExit();
+    await container.setInactivityTimeout(CONTAINER_INACTIVITY_TIMEOUT_MS);
+
+    const port = container.getTcpPort(CONTAINER_PORT);
+    const deadline = Date.now() + CONTAINER_READY_TIMEOUT_MS;
+    let lastError: unknown;
+
+    while (Date.now() < deadline) {
+      try {
+        const response = await port.fetch(
+          `http://container${CONTAINER_HEALTH_PATH}`,
+          { signal: AbortSignal.timeout(1000) },
+        );
+        await response.body?.cancel();
+        if (!response.ok) {
+          throw new Error(`Health check returned ${response.status}`);
+        }
+
+        console.log(
+          JSON.stringify({
+            event: "container_ready",
+            instance: CONTAINER_INSTANCE,
+          }),
+        );
+        return;
+      } catch (error) {
+        lastError = error;
+        await scheduler.wait(CONTAINER_READY_POLL_MS);
+      }
+    }
+
+    throw new Error("Container did not become ready", { cause: lastError });
+  }
+
+  private observeExit(): void {
+    if (this.monitoring || !this.ctx.container) return;
+
+    let monitor: Promise<void>;
+    try {
+      monitor = this.ctx.container.monitor();
+    } catch (error) {
+      logError("container_monitor_start_failed", error);
+      return;
+    }
+
+    this.monitoring = monitor
+      .then(() => {
+        console.log(
+          JSON.stringify({
+            event: "container_stopped",
+            instance: CONTAINER_INSTANCE,
+          }),
+        );
+      })
+      .catch(async (error) => {
+        logError("container_exited_with_error", error, {
+          instance: CONTAINER_INSTANCE,
+        });
+        await this.scheduleRecovery();
+      })
+      .finally(() => {
+        this.monitoring = undefined;
+      });
+
+    this.ctx.waitUntil(this.monitoring);
+  }
+
+  private async scheduleRecovery(): Promise<void> {
+    try {
+      await this.ctx.storage.setAlarm(
+        Date.now() + CONTAINER_RECOVERY_DELAY_MS,
+      );
+    } catch (error) {
+      logError("container_recovery_schedule_failed", error);
+    }
   }
 }
 
@@ -78,14 +219,10 @@ function markGatewayResponse(request: Request, response: Response): Response {
 }
 
 function containerUnavailable(request: Request, error: unknown): Response {
-  console.error(
-    JSON.stringify({
-      event: "container_request_failed",
-      method: request.method,
-      path: new URL(request.url).pathname,
-      error: error instanceof Error ? error.message : String(error),
-    }),
-  );
+  logError("container_request_failed", error, {
+    method: request.method,
+    path: new URL(request.url).pathname,
+  });
 
   return Response.json(
     { error: "container_unavailable" },
@@ -168,12 +305,7 @@ export default {
   ): Promise<void> {
     ctx.waitUntil(
       wakeContainer(env).catch((error) => {
-        console.error(
-          JSON.stringify({
-            event: "container_wakeup_failed",
-            error: error instanceof Error ? error.message : String(error),
-          }),
-        );
+        logError("container_wakeup_failed", error);
       }),
     );
   },
