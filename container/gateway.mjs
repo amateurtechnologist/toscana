@@ -24,17 +24,11 @@ function isSnowflake(value) {
   return typeof value === "string" && /^\d+$/.test(value);
 }
 
-const NON_FORWARD_MESSAGE_PATTERNS = [
-  /^(?:[^h]|h(?:(?![\s\S])|[^t])|ht(?:(?![\s\S])|[^t])|htt(?:(?![\s\S])|[^p]))/i,
-  /^(https?:\/\/\S+\s+)+([^h\s]|h(?:(?![\s\S])|[^t])|ht(?:(?![\s\S])|[^t])|htt(?:(?![\s\S])|[^p]))/i,
-  /^(https?:\/\/\S+\s+)+http(?:(?![\s\S])|[^s:]|s(?:(?![\s\S])|[^:]))/i,
-  /^(https?:\/\/\S+\s+)+https?:(?:(?![\s\S])|[^/]|\/(?:(?![\s\S])|[^/]|\/(?:(?![\s\S])|\s)))/i,
-];
+const LINK_ONLY_CONTENT_PATTERN =
+  /^(?:https?:\/\/[^\s<>]+)(?:\r?\nhttps?:\/\/[^\s<>]+)*(?![\s\S])/i;
 
-export function matchesNonForwardPattern(content) {
-  return NON_FORWARD_MESSAGE_PATTERNS.some((pattern) =>
-    pattern.test(String(content ?? "")),
-  );
+export function isLinkOnlyContent(content) {
+  return typeof content === "string" && LINK_ONLY_CONTENT_PATTERN.test(content);
 }
 
 export function createGatewayConfig(env = process.env) {
@@ -81,8 +75,8 @@ export function evaluateMessage(message, config) {
   if (!isSnowflake(message.guild_id)) {
     return { forward: false, reason: "not_a_guild_message" };
   }
-  if (matchesNonForwardPattern(message.content)) {
-    return { forward: false, reason: "content_filter" };
+  if (!isLinkOnlyContent(message.content)) {
+    return { forward: false, reason: "not_link_only" };
   }
   if (config.targetChannelIds?.has(message.channel_id)) {
     return { forward: false, reason: "target_channel" };
