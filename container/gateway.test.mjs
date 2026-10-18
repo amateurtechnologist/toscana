@@ -7,7 +7,7 @@ import {
   createGatewayConfig,
   DiscordGatewayClient,
   evaluateMessage,
-  matchesNonForwardPattern,
+  isLinkOnlyContent,
   ForwardQueue,
   forwardMessage,
   resolveMessageRoute,
@@ -34,6 +34,7 @@ function message(overrides = {}) {
     channel_type: 11,
     guild_id: "789",
     type: 0,
+    content: "https://example.com",
     author: { id: "321", bot: false },
     ...overrides,
   };
@@ -68,14 +69,20 @@ test("guild messages pass routing filters", () => {
   assert.equal(evaluateMessage(message({ type: 21 }), config).reason, "unsupported_message_type");
 });
 
-test("provided non-forward patterns suppress messages", () => {
-  assert.equal(matchesNonForwardPattern("hello"), true);
-  assert.equal(matchesNonForwardPattern("https://example.com"), false);
-  assert.equal(matchesNonForwardPattern("https://a.test https://b.test"), false);
-  assert.equal(matchesNonForwardPattern("https://a.test hello"), true);
+test("only link-only content passes the forwarding filter", () => {
+  assert.equal(isLinkOnlyContent("https://example.com"), true);
+  assert.equal(isLinkOnlyContent("https://a.test\nhttps://b.test"), true);
+  assert.equal(isLinkOnlyContent("https://a.test\r\nhttps://b.test"), true);
+  assert.equal(isLinkOnlyContent("https://a.test https://b.test"), false);
+  assert.equal(isLinkOnlyContent("https://a.test\nhello"), false);
+  assert.equal(isLinkOnlyContent("hello"), false);
   assert.equal(
     evaluateMessage(message({ content: "hello" }), config).reason,
-    "content_filter",
+    "not_link_only",
+  );
+  assert.equal(
+    evaluateMessage(message({ content: "" }), config).reason,
+    "not_link_only",
   );
 });
 
@@ -116,7 +123,8 @@ test("forward payload matches the Expand rendering and links the source", () => 
     targetChannelId: "999",
     sourceName: "#source> 🧵thread",
   });
-  assert.equal(payload.embeds[0].description, undefined);
+  assert.equal(payload.embeds, undefined);
+  assert.match(payload.content, /https:\/\/example\.com/);
   assert.equal(payload.embeds[0].footer.text, "#source> 🧵thread");
   assert.equal(payload.embeds[0].url, "https://discord.com/channels/789/456/123");
   assert.equal(payload.components[0].components[0].label, "元のメッセージを開く");
