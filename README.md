@@ -28,12 +28,13 @@ The Container keeps one Discord Gateway session open. For each guild message it
 resolves the source channel's category through the Discord API and routes
 category A to its A' channel and category B to its B' channel. A' and B' are
 excluded from forwarding to prevent loops. It never builds or stores a list of
-active thread IDs. Messages matching the non-forward content patterns are
+active thread IDs. Only messages whose entire text is one HTTP(S) URL or a
+newline-separated list of HTTP(S) URLs are forwarded; all other messages are
 discarded before category routing.
 
-Forwarding recreates the same visual shape as `/expand`: messages without
-links use a quote embed, link messages use normal content, attachments are
-uploaded when possible, and every copy has a `元のメッセージを開く` button.
+Forwarding recreates the same visual shape as `/expand`: link-only messages
+use normal content, attachments are uploaded when possible, and every copy has
+a `元のメッセージを開く` button.
 The button points to the original message so `/expand` can resolve the source.
 
 The default `fetch` handler is available for local development and health
