@@ -2,8 +2,9 @@ FROM --platform=linux/amd64 node:22-alpine
 
 WORKDIR /app
 
-COPY container/gateway.mjs container/server.mjs ./
+COPY container/server.mjs ./
 
 EXPOSE 8080
 
 CMD ["node", "server.mjs"]
+

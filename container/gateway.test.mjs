@@ -125,8 +125,7 @@ test("forward payload matches the Expand rendering and links the source", () => 
   });
   assert.equal(payload.embeds, undefined);
   assert.match(payload.content, /https:\/\/example\.com/);
-  assert.equal(payload.embeds[0].footer.text, "#source> 🧵thread");
-  assert.equal(payload.embeds[0].url, "https://discord.com/channels/789/456/123");
+  assert.match(payload.content, /#source.*thread/);
   assert.equal(payload.components[0].components[0].label, "元のメッセージを開く");
   assert.equal(payload.components[0].components[0].url, "https://discord.com/channels/789/456/123");
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
@@ -214,3 +213,4 @@ test("Gateway reports a blocked state when WebSocket support is unavailable", ()
     last_close: null,
   });
 });
+
