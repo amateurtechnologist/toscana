@@ -9,7 +9,6 @@
   "previews": {
     "containers": [
       {
-        "name": "toscana-container",
         "class_name": "ToscanaContainer",
         "image": "./Dockerfile",
         "instance_type": "lite",
