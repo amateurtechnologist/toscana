@@ -27,11 +27,6 @@ function containerEnvironment(env: Cloudflare.Env): Record<string, string> {
   return {
     NODE_ENV: "production",
     TOSCANA_SERVICE: "container",
-    DISCORD_TOKEN: env.DISCORD_TOKEN,
-    CATEGORY_A_ID: env.CATEGORY_A_ID,
-    CATEGORY_A_FORWARD_CHANNEL_ID: env.CATEGORY_A_FORWARD_CHANNEL_ID,
-    CATEGORY_B_ID: env.CATEGORY_B_ID,
-    CATEGORY_B_FORWARD_CHANNEL_ID: env.CATEGORY_B_FORWARD_CHANNEL_ID,
   };
 }
 
@@ -308,3 +303,4 @@ export default {
     );
   },
 } satisfies ExportedHandler<Cloudflare.Env>;
+

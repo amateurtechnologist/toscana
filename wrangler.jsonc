@@ -6,17 +6,18 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  "triggers": {
-    "crons": ["*/5 * * * *"]
-  },
-  "vars": {
-    "CATEGORY_A_ID": "1554077666573950986",
-    "CATEGORY_A_FORWARD_CHANNEL_ID": "1560615321910386758",
-    "CATEGORY_B_ID": "1554078902496792607",
-    "CATEGORY_B_FORWARD_CHANNEL_ID": "1560615399547216042"
-  },
-  "secrets": {
-    "required": ["DISCORD_TOKEN"]
+  "previews": {
+    "containers": [
+      {
+        "class_name": "ToscanaContainer",
+        "image": "./Dockerfile",
+        "instance_type": "lite",
+        "max_instances": 1
+      }
+    ],
+    "durable_objects": {
+      "bindings": [{ "name": "TOSCANA_CONTAINER", "class_name": "ToscanaContainer" }]
+    }
   },
   "observability": {
     "enabled": true,
@@ -49,3 +50,4 @@
     }
   }
 }
+

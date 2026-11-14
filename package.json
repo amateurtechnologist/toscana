@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "test": "node --test container/gateway.test.mjs",
+    "test": "node --test container/*.test.mjs",
     "typecheck": "wrangler types && tsc --noEmit",
     "build": "wrangler types && tsc --noEmit && wrangler deploy --dry-run",
     "deploy": "wrangler deploy"
@@ -19,3 +19,4 @@
     "wrangler": "^4.151.1"
   }
 }
+

@@ -1,6 +1,8 @@
 # toscana
 
-Cloudflare Container + Cloudflare One Gateway Forward + Discord Gateway.
+Cloudflare Container + Cloudflare One Gateway Forward のHTTP転送用Workerです。
+
+Discord投稿の自動転送は終了しました。送信元の投稿に対するメッセージコマンド `BUMP` の実行系は [agitat.ing](https://github.com/amateurtechnologist/agitat.ing) に移しています。カテゴリA・Bそれぞれの送信先は従来と同じです。送信先ID、指定絵文字のリアクションによる重複判定、コマンド登録はagitat.ingで管理します。
 
 ## Architecture
 
@@ -14,118 +16,53 @@ GatewayMiddleware.handle()
 TOSCANA_CONTAINER → ToscanaContainer Durable Object
           │
           ▼
-Docker image on port 8080
-          │
-          ▼
-Discord Gateway → MESSAGE_CREATE → category route → Expand-shaped message
+HTTP server on port 8080
 ```
 
-`GatewayMiddleware` deliberately does not call `next()`. Gateway's
-continuation preserves the original upstream destination, so this Worker
-routes the request directly to the Container Durable Object instead.
+`GatewayMiddleware` は `next()` を呼ばず、Container Durable ObjectへHTTPリクエストを渡します。このCloudflare OneのHTTP転送機能は維持しています。
 
-The Container keeps one Discord Gateway session open. For each guild message it
-resolves the source channel's category through the Discord API and routes
-category A to its A' channel and category B to its B' channel. A' and B' are
-excluded from forwarding to prevent loops. It never builds or stores a list of
-active thread IDs. Only messages whose entire text is one HTTP(S) URL or a
-newline-separated list of HTTP(S) URLs are forwarded; all other messages are
-discarded before category routing.
+ContainerはDiscord Gatewayに接続せず、`MESSAGE_CREATE` の監視・Discord APIへの転送・BUMPの実行を行いません。Dockerイメージにも旧Gatewayモジュールを含めません。Discordのトークンやカテゴリ・送信先の設定は不要です。
 
-Forwarding recreates the same visual shape as `/expand`: link-only messages
-use normal content, attachments are uploaded when possible, and every copy has
-a `元のメッセージを開く` button.
-The button points to the original message so `/expand` can resolve the source.
-
-The default `fetch` handler is available for local development and health
-checks. `/healthz` wakes the Container and returns its actual Gateway state.
-Production access is expected to come through a Cloudflare One Forward policy;
-`workersDev` and preview URLs are disabled.
+`/healthz` は `automatic_forwarding: false` と `gateway.state: "disabled"` を返します。Gatewayを常駐させるための5分間隔Cronも終了し、ContainerはHTTPリクエストで起動します。
 
 ## Local development
 
-Requirements: Node.js 22+, Docker, and a Cloudflare account with Containers
-and Workers enabled.
+Node.js 22以上と、Containerを実行する場合はDockerが必要です。
 
 ```sh
-npm install
+npm ci
 npm test
 npm run typecheck
 npm run dev
 ```
 
-The local Worker is normally available at `http://localhost:8787`. Request
-`/healthz` to check the Worker and Container path.
+通常のローカルWorker URLは `http://localhost:8787` です。`/healthz` でWorkerからContainerへの経路を確認できます。
 
 ## Deploy
 
-Enable the Message Content privileged intent in the Discord Developer Portal.
-The bot also needs `View Channel` and `Read Message History` in source
-channels, `View Channel` in their parent channels, and `View Channel` plus
-`Send Messages` in both target channels.
-
-Set only the bot token as a Worker secret:
-
-```sh
-npx wrangler secret put DISCORD_TOKEN
-```
-
-Set category and target channel IDs as ordinary Worker vars in
-`wrangler.jsonc` (or in the dashboard). IDs are configuration, not secrets:
-
-```jsonc
-{
-  "vars": {
-    "CATEGORY_A_ID": "category-id-a",
-    "CATEGORY_A_FORWARD_CHANNEL_ID": "channel-id-a-prime",
-    "CATEGORY_B_ID": "category-id-b",
-    "CATEGORY_B_FORWARD_CHANNEL_ID": "channel-id-b-prime"
-  }
-}
-```
-
-The A' target must be inside category A and B' inside category B.
-
-Authenticate with Wrangler, then deploy the Worker and Container:
+Wranglerで認証してデプロイします。
 
 ```sh
 npx wrangler login
 npm run deploy
 ```
 
-The first deployment builds the Docker image and provisions the Container
-Durable Object. Container startup can take several minutes after the first
-deployment.
+WorkerとContainerの両方を反映してください。旧Containerが動作中の間は以前の自動転送処理が残るため、Containerのロールアウト完了を確認してください。BUMPコマンドの公開はagitat.ing側のデプロイ・登録で行います。
 
-The Worker has a five-minute Cron trigger that requests the Container health
-endpoint. This is intentional: a Durable Object binding does not start its
-Container until the object receives a request. The Durable Object starts the
-Container explicitly, waits for `/healthz` before forwarding, monitors exits,
-and schedules recovery after an abnormal stop. Its inactivity timeout is
-15 minutes, so the Cron wake-up keeps the Gateway active without relying on a
-custom `onActivityExpired()` override. `container_wakeup`,
-`container_ready`, `container_exited_with_error`, `gateway_socket_open`, and
-`gateway_ready` are the relevant log events.
+変更ブランチのCloudflareビルドは `wrangler preview` を使います。`previews` にContainerとDurable Objectのバインディングを宣言し、本番とは別のプレビュー用リソースを作成します。
 
 ## Configure Gateway Forward
 
-In the same Cloudflare account:
+1. Cloudflare OneのGateway HTTP filteringとTLS decryptionを設定します。
+2. 対象ホスト・パス・ユーザーまたはデバイスを限定したHTTP Forward policyを作成します。
+3. Forward先にデプロイ済みの `toscana` Workerを指定します。
+4. 応答の `x-toscana-gateway: container` ヘッダーを確認します。
 
-1. Configure Gateway HTTP filtering and TLS decryption for the test device.
-2. Create a narrow HTTP Forward policy for one test host, path, and user or
-   device group.
-3. Select the deployed `toscana` Worker as the Forward target.
-4. Verify the response contains `x-toscana-gateway: container`.
+APIの設定例は [gateway-policy.example.json](./gateway-policy.example.json) にあります。Worker IDを実際の32文字のIDに置き換えてください。APIトークンはリポジトリに保存しません。
 
-The API payload shape is in [`gateway-policy.example.json`](./gateway-policy.example.json).
-Replace the worker ID with the deployed Worker's 32-character ID; do not put
-an API token in this repository.
-
-Forward policies apply to decrypted HTTP traffic. WebSockets, CONNECT
-tunnels, and traffic excluded from inspection bypass the Gateway Worker.
+Forward policyは復号済みHTTP通信に適用されます。WebSocket、CONNECTトンネル、検査対象外の通信はGateway Workerを経由しません。
 
 ## Container persistence
 
-Container filesystems are not durable across instance replacement. Put durable
-state in a Cloudflare binding such as D1, R2, KV, or Durable Object storage
-when the application is added.
+Containerのファイルシステムはインスタンスの置き換えで失われます。永続データにはD1、R2、KV、Durable Object storageなどを使用してください。
+
