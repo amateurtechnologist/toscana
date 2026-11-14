@@ -6,6 +6,20 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
+  "previews": {
+    "containers": [
+      {
+        "name": "toscana-container",
+        "class_name": "ToscanaContainer",
+        "image": "./Dockerfile",
+        "instance_type": "lite",
+        "max_instances": 1
+      }
+    ],
+    "durable_objects": {
+      "bindings": [{ "name": "TOSCANA_CONTAINER", "class_name": "ToscanaContainer" }]
+    }
+  },
   "observability": {
     "enabled": true,
     "logs": { "enabled": true },

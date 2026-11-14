@@ -49,6 +49,8 @@ npm run deploy
 
 WorkerとContainerの両方を反映してください。旧Containerが動作中の間は以前の自動転送処理が残るため、Containerのロールアウト完了を確認してください。BUMPコマンドの公開はagitat.ing側のデプロイ・登録で行います。
 
+変更ブランチのCloudflareビルドは `wrangler preview` を使います。`previews` にContainerとDurable Objectのバインディングを宣言し、本番とは別のプレビュー用リソースを作成します。
+
 ## Configure Gateway Forward
 
 1. Cloudflare OneのGateway HTTP filteringとTLS decryptionを設定します。
